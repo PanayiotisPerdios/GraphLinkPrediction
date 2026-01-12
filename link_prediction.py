@@ -103,12 +103,19 @@ candidate_edges_shuffled = candidate_edges.copy()
 random.shuffle(candidate_edges_shuffled)
 
 for u, v in candidate_edges_shuffled:
-    # Check if random edge choice is not a bridge and both nodes have degree > 1
-    if G_train.degree(u) > 1 and G_train.degree(v) > 1:
-        G_train.remove_edge(u, v)
-        edges_removed.append((u,v))
     if len(edges_removed) == num_to_remove:
         break
+
+    # Check degree first
+    if G_train.degree(u) <= 1 or G_train.degree(v) <= 1:
+        continue
+
+    # Check if edge is currently a bridge
+    if (u, v) in nx.bridges(G_train) or (v, u) in nx.bridges(G_train):
+        continue
+
+    G_train.remove_edge(u, v)
+    edges_removed.append((u, v))
 
 assert nx.is_connected(G_train), "Training graph is disconnected"
 
