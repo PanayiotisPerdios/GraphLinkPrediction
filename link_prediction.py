@@ -33,7 +33,7 @@ def evaluate(model, X, Y):
         auc = roc_auc_score(Y.cpu().numpy(), probs.cpu().numpy())
     return auc
 
-def train(model, X_train, Y_train, X_val, Y_val, criterion, optimizer, epochs=50):
+def train(model, X_train, Y_train, X_val, Y_val, criterion, optimizer, epochs=5):
     for epoch in range(epochs):
         model.train()
         optimizer.zero_grad()
@@ -244,6 +244,12 @@ for u,v in train_negative:
 X_train = torch.tensor(np.array(X_train), dtype=torch.float32)
 Y_train = torch.tensor(Y_train, dtype=torch.float32).unsqueeze(1)
 
+# Shuffle
+
+perm = torch.randperm(X_train.size(0))
+
+X_train = X_train[perm]
+Y_train = Y_train[perm]
 
 X_val = []
 Y_val = []
@@ -265,6 +271,12 @@ for u, v in val_negative:
 X_val = torch.tensor(np.array(X_val), dtype=torch.float32)
 Y_val = torch.tensor(Y_val, dtype=torch.float32).unsqueeze(1)
 
+# Shuffle
+perm = torch.randperm(X_val.size(0))
+
+X_val = X_val[perm]
+Y_val = Y_val[perm]
+
 # Setup model
 embedding_dimension = embeddings.shape[1]
 model_mlp = MLP(embedding_dimension=embedding_dimension)
@@ -280,7 +292,7 @@ train(model = model_mlp,
       Y_val = Y_val,
       criterion = criterion,
       optimizer = optimizer,
-      epochs = 50
+      epochs = 5
 )
 
 # Final evaluation
