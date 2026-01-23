@@ -1,15 +1,13 @@
-import torch
-import torch.nn as nn
-import dgl
-import random
-import numpy as np
-import networkx as nx
+from preprocess import load_cora_graph
 from karateclub import Node2Vec
-from dgl.data import CoraGraphDataset
-from sklearn.metrics import roc_auc_score
-import torch.optim as optim
+import torch
+import numpy as np
+import random
 from sklearn.model_selection import train_test_split
-
+from sklearn.metrics import roc_auc_score
+import torch.nn as nn
+import networkx as nx
+import torch.optim as optim
 
 class MLP(nn.Module):
     def __init__(self,embedding_dimension):
@@ -33,7 +31,7 @@ def evaluate(model, X, Y):
         auc = roc_auc_score(Y.cpu().numpy(), probs.cpu().numpy())
     return auc
 
-def train(model, X_train, Y_train, X_val, Y_val, criterion, optimizer, epochs=5):
+def train(model, X_train, Y_train, X_val, Y_val, criterion, optimizer, epochs=100):
     for epoch in range(epochs):
         model.train()
         optimizer.zero_grad()
@@ -51,118 +49,8 @@ def train(model, X_train, Y_train, X_val, Y_val, criterion, optimizer, epochs=5)
 
         print(f"Epoch {epoch:03d} | Loss: {loss.item():.4f} | Val AUC: {val_auc:.4f}")
 
-dataset = CoraGraphDataset()
-g = dataset[0]
+G_train, test_positive_edges, test_negative_edges, G, g_dgl = load_cora_graph()
 
-nx_g = g.to_networkx()
-G_und = nx_g.to_undirected()
-
-G_simple = nx.Graph(G_und) 
-
-components = list(nx.connected_components(G_simple))
-giant = max(components, key=len)
-print("Original nodes:", g.num_nodes(), "Original edges:", g.num_edges())
-print("Number of components (undirected):", len(components))
-print("Largest component size:", len(giant))
-
-G = G_simple.subgraph(giant).copy()
-
-print("Nodes in largest component (undirected):", G.number_of_nodes())
-print("Edges in largest component (undirected):", G.number_of_edges())
-
-# Check for self-loops and multiple edges for candidate edges
-edges = set()
-
-for u,v in G.edges():
-    if u != v:
-        edges.add((min(u, v), max(u, v)))
-
-# Get G's bridges
-bridges = set()
-for u,v in nx.bridges(G):
-    edge = (min(u, v), max(u, v))
-    bridges.add(edge)
-
-# Check if candidate edges are bridges
-candidate_edges = []
-
-for e in edges:
-    if e not in bridges:
-        candidate_edges.append(e)
-
-candidate_num_edges = len(candidate_edges)
-percentage_to_remove = 0.10
-
-num_to_remove = int(candidate_num_edges * percentage_to_remove)
-
-edges_removed = []
-
-G_train = G.copy()
-
-candidate_edges_shuffled = candidate_edges.copy()
-random.shuffle(candidate_edges_shuffled)
-
-for u, v in candidate_edges_shuffled:
-    if len(edges_removed) == num_to_remove:
-        break
-
-    # Check degree first
-    if G_train.degree(u) <= 1 or G_train.degree(v) <= 1:
-        continue
-
-    # Check if edge is currently a bridge
-    if (u, v) in nx.bridges(G_train) or (v, u) in nx.bridges(G_train):
-        continue
-
-    G_train.remove_edge(u, v)
-    edges_removed.append((u, v))
-
-assert nx.is_connected(G_train), "Training graph is disconnected"
-
-# Test edges
-test_positive_edges = edges_removed
-nodes = list(G_train.nodes())
-
-test_negative_edges = []
-
-for _ in range(num_to_remove):
-    u,v = random.sample(nodes, 2)
-
-    if not G_train.has_edge(u,v):
-        test_negative_edges.append((u,v))
-
-all_test_edges = test_positive_edges + test_negative_edges
-
-test_labels_heu = [1]*len(test_positive_edges) + [0]*len(test_negative_edges)
-
-common_neighbors_scores = []
-
-for u,v in all_test_edges:
-    common_neighbors = list(nx.common_neighbors(G_train, u,v))
-    score = len(common_neighbors)
-    common_neighbors_scores.append(score)
-
-aa_index_scores = []
-
-aa_index = list(nx.adamic_adar_index(G_train, all_test_edges))
-for u,v,score in aa_index:
-    aa_index_scores.append(score)
-
-jaccard_scores = []
-
-jaccard = list(nx.jaccard_coefficient(G_train, all_test_edges))
-for u,v,score in jaccard:
-    jaccard_scores.append(score)
-
-common_neighboors_auc = roc_auc_score(test_labels_heu, common_neighbors_scores)
-aa_index_auc = roc_auc_score(test_labels_heu, aa_index_scores)
-jaccard_auc = roc_auc_score(test_labels_heu, jaccard_scores)
-
-print("Common Neighbors AUC:", common_neighboors_auc)
-print("Adamic-Adar AUC:", aa_index_auc)
-print("Jaccard AUC:", jaccard_auc)
-
-# Shallow embeddings
 model = Node2Vec(dimensions=128,walk_length=80,walk_number=10,p=1,q=1)
 
 # Reindexing
