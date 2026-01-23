@@ -21,10 +21,18 @@ Assignment for my Graph Technologies and Applications course
   pip install --upgrade pip
   pip install -r requirements.txt
   ```
-5. **Run script**
+5. **Run Heuristics script**
   ```bash
-  python3 link_prediction.py
-  ```  
+  python3 heuristics.py
+  ```
+6. **Run Node2Vec and Simple MLP script**
+  ```bash
+  python3 node2vec_mlp.py
+  ```
+7. **Run GNN script**
+  ```bash
+  python3 gnn.py
+  ```   
 ## (Optional) For Jupyter Notebook use
 
 1. **Install `jupyter` and `ipykernel`**
@@ -48,3 +56,5 @@ Assignment for my Graph Technologies and Applications course
   ```bash
   jupyter notebook
   ```
+## Alternatively: VSCode extension for Jupyter:
+https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter
