@@ -5,6 +5,7 @@ import torch.nn as nn
 from dgl.nn import GraphConv
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import train_test_split
 
 class GCN(nn.Module):
     def __init__(self, in_feats, h_feats, out_feats):
@@ -18,13 +19,13 @@ class GCN(nn.Module):
         h = self.conv2(g,h)
         return h
     
-def dot_predictor(z, edges):
+def dot_product(z, edges):
     u = edges[:,0] 
     v = edges[:,1]
     y_hat = (z[u] * z[v]).sum(dim=1)
     return y_hat
 
-def train(model, g_train, node_feats, optimizer, predictor, epochs=100, neg_samples=1):
+def train(model, g_train, node_feats, val_pos, val_neg, optimizer, decoder, epochs=100, neg_samples=1):
 
     for epoch in range(epochs):
         model.train()
@@ -33,46 +34,57 @@ def train(model, g_train, node_feats, optimizer, predictor, epochs=100, neg_samp
 
         # Getting possitive edges
         u, v = g_train.edges()
-        possitive_edges = torch.stack([u, v], dim=1)
-        possitive_score = predictor(z, possitive_edges)
-        possitive_label = torch.ones_like(possitive_score)
+        positive_edges = torch.stack([u, v], dim=1)
+        positive_score = decoder(z, positive_edges)
+        positive_label = torch.ones_like(positive_score)
 
         # Negative sampling
         num_negative = u.shape[0] * neg_samples
         negative_u = torch.randint(0, g_train.num_nodes(), (num_negative,))
         negative_v = torch.randint(0, g_train.num_nodes(), (num_negative,))
         negative_edges = torch.stack([negative_u, negative_v], dim=1)
-        negative_score = predictor(z, negative_edges)
+        negative_score = decoder(z, negative_edges)
         negative_label = torch.zeros_like(negative_score)
 
         
-        scores = torch.cat([possitive_score, negative_score])
-        labels = torch.cat([possitive_label, negative_label])
+        scores = torch.cat([positive_score, negative_score])
+        labels = torch.cat([positive_label, negative_label])
 
         loss = F.binary_cross_entropy_with_logits(scores, labels)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        if epoch % 10 == 0:
-            print(f"Epoch {epoch:03d} | Loss {loss.item():.4f}")
+        with torch.no_grad():
+             val_auc = evaluate(
+                    model=model,
+                    decoder=decoder,
+                    g=g_train,
+                    node_feats=node_feats,
+                    pos_edges=val_pos,
+                    neg_edges=val_neg
+                )
 
-def evaluate(model, predictor, g, node_feats, test_positive_edges, test_negative_edges):
+        print(f"Epoch {epoch:03d} | Loss: {loss.item():.4f} | Val AUC: {val_auc:.4f}")
+
+
+def evaluate(model, decoder, g, node_feats, pos_edges, neg_edges):
     model.eval()
 
     with torch.no_grad():
         z = model(g, node_feats )
-        positive_edges = torch.tensor(test_positive_edges)
-        negative_edges = torch.tensor(test_negative_edges)
+        positive_edges = torch.tensor(pos_edges)
+        negative_edges = torch.tensor(neg_edges)
 
-        positive_score = predictor(z, positive_edges)
-        negative_score = predictor(z, negative_edges)
+        positive_score = decoder(z, positive_edges)
+        negative_score = decoder(z, negative_edges)
 
-        scores = torch.cat([positive_score, negative_score]).cpu().numpy()
-        labels = torch.cat([
-            torch.ones(len(positive_score)), 
-            torch.zeros(len(negative_score))]).cpu().numpy()
+        scores = torch.cat([positive_score, negative_score])
 
+        positive_label = torch.ones(len(positive_score)) 
+        negative_label = torch.zeros(len(negative_score))
+
+        labels = torch.cat([positive_label, negative_label])
 
         auc = roc_auc_score(labels, scores)
 
@@ -80,11 +92,25 @@ def evaluate(model, predictor, g, node_feats, test_positive_edges, test_negative
 
 G_train, test_positive_edges, test_negative_edges, G, g_dgl = load_cora_graph()
 
+# Convert graph from NetworkX to DGL
 g_train_dgl = dgl.from_networkx(G_train)
 g_train_dgl = dgl.add_self_loop(g_train_dgl)
 
 node_list = list(G_train.nodes())
 g_train_dgl.ndata["feat"] = g_dgl.ndata["feat"][torch.tensor(node_list)]
+
+# Test/Val split sets
+val_positive_edges, test_positive_edges = train_test_split(
+    test_positive_edges,
+    test_size=0.5,
+    random_state=42
+)
+
+val_negative_edges, test_negative_edges = train_test_split(
+    test_negative_edges,
+    test_size=0.5,
+    random_state=42
+)
 
 # Setting up encoder (GCN)
 in_feats = g_train_dgl.ndata["feat"].shape[1]
@@ -96,46 +122,75 @@ encoder = GCN(in_feats=in_feats, h_feats=h_feats, out_feats=out_feats)
 
 optimizer = torch.optim.Adam(encoder.parameters(), lr=0.01)
 
+# Reindex test edges
+mapping = {}
+positive_mapped_test_edges = []
+negative_mapped_test_edges = []
+
+for new_index, old_node in enumerate(G_train.nodes()):
+    mapping[old_node] = new_index
+
+for u, v in test_positive_edges:
+    if u in mapping and v in mapping:
+        u_i = mapping[u]
+        v_i = mapping[v]
+        positive_mapped_test_edges.append((u_i, v_i))
+
+for u, v in test_negative_edges:
+    if u in mapping and v in mapping:
+        u_i = mapping[u]
+        v_i = mapping[v]
+        negative_mapped_test_edges.append((u_i, v_i))
+
+# Reindex val edges
+positive_mapped_val_edges = []
+negative_mapped_val_edges = []
+
+for u, v in val_positive_edges:
+    if u in mapping and v in mapping:
+        u_i = mapping[u]
+        v_i = mapping[v]
+        positive_mapped_val_edges.append((u_i, v_i))
+
+for u, v in val_negative_edges:
+    if u in mapping and v in mapping:
+        u_i = mapping[u]
+        v_i = mapping[v]
+        negative_mapped_val_edges.append((u_i, v_i))
+
 # Train model
 
 train(
     model = encoder,
     g_train = g_train_dgl,
     node_feats = g_train_dgl.ndata["feat"],
+    val_pos = positive_mapped_val_edges,
+    val_neg = negative_mapped_val_edges,
     optimizer = optimizer,
-    predictor = dot_predictor,
+    decoder = dot_product,
     epochs = 100,
     neg_samples = 1
 )
 
-mapping = {}
-positive_mapped_edges = []
-negative_mapped_edges = []
-
-for new_index, old_node in enumerate(G_train.nodes()):
-    mapping[old_node] = new_index
-
-for u, v in test_positive_edges:
-
-    if u in mapping and v in mapping:
-        u_i = mapping[u]
-        v_i = mapping[v]
-        positive_mapped_edges.append((u_i, v_i))
-
-for u, v in test_negative_edges:
-    if u in mapping and v in mapping:
-        u_i = mapping[u]
-        v_i = mapping[v]
-        negative_mapped_edges.append((u_i, v_i))
-
-# Evaluation
-auc = evaluate(
+# Final Evaluation 
+test_auc = evaluate(
     model = encoder,
-    predictor = dot_predictor,
+    decoder = dot_product,
     g = g_train_dgl,
     node_feats = g_train_dgl.ndata["feat"],
-    test_positive_edges = positive_mapped_edges,
-    test_negative_edges = negative_mapped_edges
+    pos_edges = positive_mapped_test_edges,
+    neg_edges = negative_mapped_test_edges
 )
 
-print("Test AUC:", auc)
+val_auc = evaluate(
+    model=encoder,
+    decoder=dot_product,
+    g=g_train_dgl,
+    node_feats=g_train_dgl.ndata["feat"],
+    pos_edges=positive_mapped_val_edges,
+    neg_edges=negative_mapped_val_edges
+)
+
+print("Final Val AUC:", val_auc)
+print("Final Test AUC:", test_auc)
+

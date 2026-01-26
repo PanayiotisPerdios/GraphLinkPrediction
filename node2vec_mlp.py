@@ -63,7 +63,6 @@ G_reindexed = nx.relabel_nodes(G, mapping)
 
 model.fit(G_reindexed)
 embeddings = model.get_embedding()
-print(embeddings)
 
 # Hadamard product for test edges
 positive_edge_embeddings = []
@@ -180,7 +179,7 @@ train(model = model_mlp,
       Y_val = Y_val,
       criterion = criterion,
       optimizer = optimizer,
-      epochs = 5
+      epochs = 100
 )
 
 # Final evaluation
